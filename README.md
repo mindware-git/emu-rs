@@ -3,3 +3,7 @@ emu gpu!
 
 USER-ISA 2.2
 RV32I
+
+# test
+https://github.com/riscv-software-src/riscv-tests/tree/master/isa
+https://github.com/defermelowie/bare-metal-rust-on-riscv
