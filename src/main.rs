@@ -1,5 +1,5 @@
 use clap::Parser;
-use emu_rs::{decode, Cpu};
+use emu_rs::{decode, Core};
 use std::{fs, path::Path};
 
 fn str_inst_to_bin(hex_str: &str) -> u32 {
@@ -24,7 +24,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let mut cpu = Cpu::default();
+    let mut cpu = Core::default();
     let file_path = Path::new(&args.path);
 
     if args.text_mode {
@@ -41,8 +41,16 @@ fn main() {
         if cpu.mem.len() < min_mem_byte {
             cpu.mem.resize(min_mem_byte, 0);
         }
-        for _ in 0..50 {
+        loop {
             let inst = cpu.fetch();
+            println!(
+                "pc :{:#08x}, inst :{:#08x}, {:#032b}",
+                cpu.int_reg.pc, inst, inst
+            );
+            if inst == 0x0ff0000f {
+                break;
+            }
+            // cpu.int_reg.pc += 4;
             decode(&mut cpu, inst);
         }
     }
