@@ -195,6 +195,58 @@ fn execute_add_sub(reg: &mut IntRegister, inst: u32) {
         reg.x[rd] = add_ignore_overflow(reg.x[rs1], reg.x[rs2]);
     }
 }
+fn execute_sll(reg: &mut IntRegister, inst: u32) {
+    let (funct7, rd, rs1, rs2) = parse_rtype(inst);
+    assert_eq!(funct7, 0);
+    reg.x[rd] = reg.x[rs1] << reg.x[rs2];
+}
+
+fn execute_slt(reg: &mut IntRegister, inst: u32) {
+    let (funct7, rd, rs1, rs2) = parse_rtype(inst);
+    assert_eq!(funct7, 0);
+    if (reg.x[rs1] as i32) < (reg.x[rs2] as i32) {
+        reg.x[rd] = 1;
+    } else {
+        reg.x[rd] = 0;
+    }
+}
+fn execute_sltu(reg: &mut IntRegister, inst: u32) {
+    let (funct7, rd, rs1, rs2) = parse_rtype(inst);
+    assert_eq!(funct7, 0);
+    if reg.x[rs1] < reg.x[rs2] {
+        reg.x[rd] = 1;
+    } else {
+        reg.x[rd] = 0;
+    }
+}
+
+fn execute_xor(reg: &mut IntRegister, inst: u32) {
+    let (funct7, rd, rs1, rs2) = parse_rtype(inst);
+    assert_eq!(funct7, 0);
+    reg.x[rd] = reg.x[rs1] ^ reg.x[rs2];
+}
+
+fn execute_srl_a(reg: &mut IntRegister, inst: u32) {
+    let (funct7, rd, rs1, rs2) = parse_rtype(inst);
+    if (funct7 & bit_gen(5, 5)) > 0 {
+        reg.x[rd] = ((reg.x[rs1] as i32) >> (reg.x[rs2] as i32)) as u32;
+    } else {
+        reg.x[rd] = reg.x[rs1] >> reg.x[rs2];
+    }
+}
+
+fn execute_or(reg: &mut IntRegister, inst: u32) {
+    let (funct7, rd, rs1, rs2) = parse_rtype(inst);
+    assert_eq!(funct7, 0);
+    reg.x[rd] = reg.x[rs1] | reg.x[rs2];
+}
+
+fn execute_and(reg: &mut IntRegister, inst: u32) {
+    let (funct7, rd, rs1, rs2) = parse_rtype(inst);
+    assert!(funct7 == 0);
+    reg.x[rd] = cal_and(reg.x[rs1], reg.x[rs2]);
+}
+
 fn execute_beq(reg: &mut IntRegister, inst: u32) {
     let (imm, rs1, rs2) = parse_btype(inst);
     if reg.x[rs1] == reg.x[rs2] {
@@ -237,12 +289,6 @@ fn execute_bgeu(reg: &mut IntRegister, inst: u32) {
         reg.pc -= 4;
         reg.pc = (reg.pc as i32 + imm) as u32;
     }
-}
-
-fn execute_and(reg: &mut IntRegister, inst: u32) {
-    let (funct7, rd, rs1, rs2) = parse_rtype(inst);
-    assert!(funct7 == 0);
-    reg.x[rd] = cal_and(reg.x[rs1], reg.x[rs2]);
 }
 
 fn execute_lb(cpu: &mut Core, inst: u32) {
@@ -331,7 +377,7 @@ fn execute_i_inst(cpu: &mut Core, inst: u32) {
             execute_jalr(reg, inst);
         }
         0b1100011 =>
-        // branch
+        // B-type
         {
             match floor_mask_value(inst, 12, 14) {
                 0b000 => execute_beq(reg, inst),
@@ -344,7 +390,7 @@ fn execute_i_inst(cpu: &mut Core, inst: u32) {
             }
         }
         0b0000011 =>
-        // load
+        // I-type
         {
             match floor_mask_value(inst, 12, 14) {
                 0b000 => execute_lb(cpu, inst),
@@ -355,15 +401,14 @@ fn execute_i_inst(cpu: &mut Core, inst: u32) {
                 _ => panic!("unsupported load type"),
             }
         }
-        0b0100011 => {
-            // store
-            {
-                match floor_mask_value(inst, 12, 14) {
-                    0b000 => execute_sb(cpu, inst),
-                    0b001 => execute_sh(cpu, inst),
-                    0b010 => execute_sw(cpu, inst),
-                    _ => panic!("unsupported store type"),
-                }
+        0b0100011 =>
+        // S-type
+        {
+            match floor_mask_value(inst, 12, 14) {
+                0b000 => execute_sb(cpu, inst),
+                0b001 => execute_sh(cpu, inst),
+                0b010 => execute_sw(cpu, inst),
+                _ => panic!("unsupported store type"),
             }
         }
         0b0010011 =>
@@ -382,10 +427,16 @@ fn execute_i_inst(cpu: &mut Core, inst: u32) {
             }
         }
         0b0110011 =>
-        // S-type
+        // R-type
         {
             match floor_mask_value(inst, 12, 14) {
                 0b000 => execute_add_sub(reg, inst),
+                0b001 => execute_sll(reg, inst),
+                0b010 => execute_slt(reg, inst),
+                0b011 => execute_sltu(reg, inst),
+                0b100 => execute_xor(reg, inst),
+                0b101 => execute_srl_a(reg, inst),
+                0b110 => execute_or(reg, inst),
                 0b111 => execute_and(reg, inst),
                 _ => panic!("unsupported S-type"),
             }
