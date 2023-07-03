@@ -27,6 +27,13 @@ pub struct IntRegister {
 #[derive(Default)]
 pub struct VecRegister {
     pub x: [u128; REG_SIZE],
+    pub vstart: u32,
+    pub vxstart: u32,
+    pub vxrm: u32,
+    pub vcsr: u32,
+    pub vl: u32,
+    pub vtype: u32,
+    pub vlben: u32,
 }
 
 /// this can not handle u32::MAX because const fn not accept if
@@ -473,6 +480,9 @@ fn execute_i_inst(cpu: &mut Core, inst: u32) {
             // ECALL, EBREAK;
             panic!("E_CALL,BREA not implemented!");
         }
+        0b1010111 => {
+            // vector arithmetic
+        }
         _ => panic!("invalid opcode {:b}", inst),
     }
 }
@@ -720,4 +730,23 @@ fn test_jalr() {
     }
 
     assert_eq!(cpu.int_reg.x[5], 14);
+}
+#[test]
+fn test_vector_1() {
+    /*
+    __riscv_vsetvl_e8m8(128)
+    */
+    let mut cpu = Core::default();
+    let insts: [u32; 1] = [0xc357557];
+    for inst in insts {
+        cpu.mem.push(inst as u8);
+        cpu.mem.push((inst >> 8) as u8);
+        cpu.mem.push((inst >> 16) as u8);
+        cpu.mem.push((inst >> 24) as u8);
+    }
+
+    let inst = cpu.fetch();
+    decode(&mut cpu, inst);
+
+    assert_eq!(0, 0);
 }
