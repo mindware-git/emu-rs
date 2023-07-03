@@ -55,7 +55,9 @@ fn sigend_ext(val: u32, leftmost: u32) -> u32 {
 fn add_ignore_overflow(val1: u32, val2: u32) -> u32 {
     (Wrapping(val1) + Wrapping(val2)).0
 }
-
+fn sub_ignore_overflow(val1: u32, val2: u32) -> u32 {
+    (Wrapping(val1) - Wrapping(val2)).0
+}
 fn parse_rtype(inst: u32) -> (u32, usize, usize, usize) {
     let funct7 = inst >> 25;
     let rd = floor_mask_value(inst, 7, 11) as usize;
@@ -71,8 +73,10 @@ fn parse_itype(inst: u32) -> (i32, usize, usize) {
     (imm, rd, rs1)
 }
 
-fn parse_stype(inst: u32) -> (u32, usize, usize) {
-    let imm = floor_mask_value(inst, 7, 11) + (floor_mask_value(inst, 25, 31) << 5);
+fn parse_stype(inst: u32) -> (i32, usize, usize) {
+    let mut imm = (inst as i32) >> 20;
+    imm = imm & (bit_gen(5, 31) as i32);
+    imm = imm | floor_mask_value(inst, 7, 11) as i32;
     let rs1 = floor_mask_value(inst, 15, 19) as usize;
     let rs2 = floor_mask_value(inst, 20, 24) as usize;
     (imm, rs1, rs2)
@@ -84,12 +88,13 @@ fn parse_utype(inst: u32) -> (u32, usize) {
     (imm, rd)
 }
 
-fn parse_jtype(inst: u32) -> i32 {
+fn parse_jtype(inst: u32) -> (i32, usize) {
     let imm = (inst as i32 >> 11) & (bit_gen(20, 31) as i32);
     let mid = (floor_mask_value(inst, 21, 30) << 1)
         + (floor_mask_value(inst, 20, 20) << 11)
         + (floor_mask_value(inst, 12, 19) << 12);
-    imm | mid as i32
+    let rd = floor_mask_value(inst, 7, 11) as usize;
+    (imm | mid as i32, rd)
 }
 
 fn parse_btype(inst: u32) -> (i32, usize, usize) {
@@ -113,18 +118,17 @@ fn execute_auipc(reg: &mut IntRegister, inst: u32) {
 }
 
 fn execute_jal(reg: &mut IntRegister, inst: u32) {
-    let imm = parse_jtype(inst);
+    let (imm, rd) = parse_jtype(inst);
+    reg.x[rd] = reg.pc;
     reg.pc -= 4;
     reg.pc = (reg.pc as i32 + imm) as u32;
 }
 
 fn execute_jalr(reg: &mut IntRegister, inst: u32) {
     let (imm, rd, rs1) = parse_itype(inst);
-    if rd != 0 {
-        reg.x[rd] = reg.pc;
-    }
-    reg.pc -= 4;
+    let t = reg.pc;
     reg.pc = add_ignore_overflow(imm as u32, reg.x[rs1]);
+    reg.x[rd] = t;
 }
 
 fn cal_and(val1: u32, val2: u32) -> u32 {
@@ -133,6 +137,13 @@ fn cal_and(val1: u32, val2: u32) -> u32 {
 
 fn execute_addi(reg: &mut IntRegister, inst: u32) {
     let (imm, rd, rs1) = parse_itype(inst);
+    if rd == 0 {
+        reg.x[0] = 0;
+        return;
+    }
+    if rs1 == 0 {
+        reg.x[rs1] = 0;
+    }
     reg.x[rd] = add_ignore_overflow(reg.x[rs1], imm as u32);
 }
 
@@ -189,8 +200,16 @@ fn execute_srli_a(reg: &mut IntRegister, inst: u32) {
 
 fn execute_add_sub(reg: &mut IntRegister, inst: u32) {
     let (funct7, rd, rs1, rs2) = parse_rtype(inst);
+    if rd == 0 {
+        reg.x[0] = 0;
+        return;
+    }
+    if rs1 == 0 || rs2 == 0 {
+        reg.x[0] = 0;
+    }
+
     if (funct7 & bit_gen(5, 5)) > 0 {
-        reg.x[rd] = reg.x[rs1] - reg.x[rs2];
+        reg.x[rd] = sub_ignore_overflow(reg.x[rs1], reg.x[rs2]);
     } else {
         reg.x[rd] = add_ignore_overflow(reg.x[rs1], reg.x[rs2]);
     }
@@ -198,7 +217,8 @@ fn execute_add_sub(reg: &mut IntRegister, inst: u32) {
 fn execute_sll(reg: &mut IntRegister, inst: u32) {
     let (funct7, rd, rs1, rs2) = parse_rtype(inst);
     assert_eq!(funct7, 0);
-    reg.x[rd] = reg.x[rs1] << reg.x[rs2];
+    let lower_5 = reg.x[rs2] & bit_gen(0, 4);
+    reg.x[rd] = reg.x[rs1] << lower_5;
 }
 
 fn execute_slt(reg: &mut IntRegister, inst: u32) {
@@ -228,10 +248,12 @@ fn execute_xor(reg: &mut IntRegister, inst: u32) {
 
 fn execute_srl_a(reg: &mut IntRegister, inst: u32) {
     let (funct7, rd, rs1, rs2) = parse_rtype(inst);
+    let lower_5 = reg.x[rs2] & bit_gen(0, 4);
     if (funct7 & bit_gen(5, 5)) > 0 {
-        reg.x[rd] = ((reg.x[rs1] as i32) >> (reg.x[rs2] as i32)) as u32;
+        //sra
+        reg.x[rd] = ((reg.x[rs1] as i32) >> (lower_5 as i32)) as u32;
     } else {
-        reg.x[rd] = reg.x[rs1] >> reg.x[rs2];
+        reg.x[rd] = reg.x[rs1] >> lower_5;
     }
 }
 
@@ -315,7 +337,7 @@ fn execute_lw(cpu: &mut Core, inst: u32) {
         .try_into()
         .expect("slice with incorrect length");
     let valid_data = u32::from_le_bytes(data);
-    cpu.int_reg.x[rd] = sigend_ext(valid_data, 15);
+    cpu.int_reg.x[rd] = valid_data;
 }
 
 fn execute_lbu(cpu: &mut Core, inst: u32) {
@@ -328,20 +350,23 @@ fn execute_lbu(cpu: &mut Core, inst: u32) {
 fn execute_lhu(cpu: &mut Core, inst: u32) {
     let (imm, rd, rs1) = parse_itype(inst);
     let mem_addr = (cpu.int_reg.x[rs1] as i32 + imm) as usize;
-    let data = cpu.mem[mem_addr] as u32;
-    cpu.int_reg.x[rd] = data;
+    let data: [u8; 2] = cpu.mem[mem_addr..mem_addr + 2]
+        .try_into()
+        .expect("slice with incorrect length");
+    let valid_data = u16::from_le_bytes(data);
+    cpu.int_reg.x[rd] = valid_data as u32;
 }
 
 fn execute_sb(cpu: &mut Core, inst: u32) {
     let (imm, rs1, rs2) = parse_stype(inst);
-    let mem_addr = (cpu.int_reg.x[rs1] + sigend_ext(imm, 11)) as usize;
+    let mem_addr = (cpu.int_reg.x[rs1] as i32 + imm) as usize;
     let data = cpu.int_reg.x[rs2] as u8;
     cpu.mem[mem_addr] = data;
 }
 
 fn execute_sh(cpu: &mut Core, inst: u32) {
     let (imm, rs1, rs2) = parse_stype(inst);
-    let mem_addr = (cpu.int_reg.x[rs1] + sigend_ext(imm, 11)) as usize;
+    let mem_addr = (cpu.int_reg.x[rs1] as i32 + imm) as usize;
     let mut data = cpu.int_reg.x[rs2] as u16;
     cpu.mem[mem_addr] = data as u8;
     data = data >> 8;
@@ -350,7 +375,7 @@ fn execute_sh(cpu: &mut Core, inst: u32) {
 
 fn execute_sw(cpu: &mut Core, inst: u32) {
     let (imm, rs1, rs2) = parse_stype(inst);
-    let mem_addr = (cpu.int_reg.x[rs1] + sigend_ext(imm, 11)) as usize;
+    let mem_addr = (cpu.int_reg.x[rs1] as i32 + imm) as usize;
     let mut data = cpu.int_reg.x[rs2];
     for idx in 0..4 {
         cpu.mem[mem_addr + idx] = data as u8;
@@ -442,7 +467,7 @@ fn execute_i_inst(cpu: &mut Core, inst: u32) {
             }
         }
         0b0001111 => {
-            panic!("E_CALL,BREA not implemented!");
+            // for now fence do nothing.
         }
         0b1110011 => {
             // ECALL, EBREAK;
